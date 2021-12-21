@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -29,66 +28,40 @@ func main() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
 	}()
 
-	reads := make(chan net.Conn)
-	writes := make(chan net.Conn)
-	msgs := make(chan string)
+	outboundMsgs := make(chan Msg)
+	newConns := make(chan *Conn)
+	conns := make(map[*Conn]bool)
 	go func() {
+		var id Id = 1
 		for {
-			c, err := l.Accept()
+			rawConn, err := l.Accept()
 			if err != nil {
 				log.Printf("Error accepting new connetion: %s \n", err)
 			}
-			reads <- c
-			writes <- c
-		}
-	}()
-
-	go func() {
-		writers := make([]*bufio.Writer, 0)
-		for {
-			select {
-			case w := <-writes:
-				writers = append(writers, bufio.NewWriter(w))
-			case msg := <-msgs:
-				for _, w := range writers {
-					_, err := w.WriteString(msg)
-					if err != nil {
-						log.Print("Failed to write")
-					}
-					err = w.Flush()
-					if err != nil {
-						log.Println("Failed to flush")
-					}
-				}
+			inboundMsgs := make(chan Msg)
+			newConns <- &Conn{
+				Id:           id,
+				ReadWrite:    bufio.NewReadWriter(bufio.NewReader(rawConn), bufio.NewWriter(rawConn)),
+				ReadFromConn: outboundMsgs,
+				WriteToConn:  inboundMsgs,
 			}
+			id++
 		}
 	}()
 
 	go func() {
-		for c := range reads {
-			go func(c net.Conn) {
-				defer func(c net.Conn) {
-					err := c.Close()
-					if err != nil {
-						log.Printf("error closing connection: %s", err)
-					}
-				}(c)
-				r := bufio.NewReader(c)
-				if err != nil {
-					log.Printf("error %s", err)
-				}
-				for {
-					msg, err := r.ReadString('\n')
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						log.Printf("Error reading string: %s \n", err)
-					}
-					log.Println(msg)
-					msgs <- msg
-				}
-			}(c)
+		for c := range newConns {
+			go launchReader(c)
+			go launchWriter(c)
+			conns[c] = true
+		}
+	}()
+
+	go func() {
+		for m := range outboundMsgs {
+			for conn := range conns {
+				conn.WriteToConn <- m
+			}
 		}
 	}()
 
@@ -96,4 +69,38 @@ func main() {
 	signal.Notify(sig, os.Interrupt, os.Kill)
 	<-sig
 	log.Println("Shutting Down...")
+}
+
+func launchReader(c *Conn) {
+	log.Printf("launching new reader id %d", c.Id)
+	for {
+		m, err := c.ReadWrite.ReadString('\n')
+		if err != nil {
+			log.Printf("error reading connection id: %d", c.Id)
+			continue
+		}
+		c.ReadFromConn <- Msg{Content: m, SenderId: c.Id}
+
+		//FIXME exiting this goroutine
+	}
+}
+
+func launchWriter(c *Conn) {
+	log.Printf("launching new writer id %d", c.Id)
+	for m := range c.WriteToConn {
+		if c.Id == m.SenderId {
+			continue
+		}
+
+		_, err := c.ReadWrite.WriteString(m.Content)
+		if err != nil {
+			log.Printf("error writing msg to connection %d", c.Id)
+		}
+		err = c.ReadWrite.Flush()
+		if err != nil {
+			log.Printf("error flushing connection %d", c.Id)
+		}
+	}
+
+	//FIXME exiting this goroutine
 }
