@@ -17,7 +17,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error starting tcp server %s \n", err)
 	}
-	defer l.Close()
+	defer func(l net.Listener) {
+		err := l.Close()
+		if err != nil {
+			log.Printf("error closing listener: %s", err)
+		}
+	}(l)
 
 	runtime.SetBlockProfileRate(1)
 	go func() {
@@ -62,7 +67,12 @@ func main() {
 	go func() {
 		for c := range reads {
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func(c net.Conn) {
+					err := c.Close()
+					if err != nil {
+						log.Printf("error closing connection: %s", err)
+					}
+				}(c)
 				r := bufio.NewReader(c)
 				if err != nil {
 					log.Printf("error %s", err)
