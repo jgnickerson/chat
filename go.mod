@@ -1,4 +1,4 @@
-module jgnickerson/file-master
+module github.com/jgnickerson/chat
 
 go 1.17
 

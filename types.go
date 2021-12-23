@@ -1,6 +1,8 @@
 package main
 
-import "bufio"
+import (
+	"net"
+)
 
 type Id int
 
@@ -11,7 +13,7 @@ type Msg struct {
 
 type Conn struct {
 	Id Id
-	ReadWrite *bufio.ReadWriter
+	RawConn   net.Conn
 	// Msgs coming from this Connection, to go to other connections
 	ReadFromConn chan Msg
 	// Inbound from this connection
